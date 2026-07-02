@@ -21,7 +21,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Crear archivo de credenciales
-        run: echo "${{ secrets.GOOGLE_CREDENTIALS_JSON }}" > credentials.json
+        run: echo "${{ secrets.GOOGLE_CREDENTIALS_JSON_B64 }}" | base64 -d > credentials.json 
 
       - name: Generar reporte
         env:
