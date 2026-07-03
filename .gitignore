@@ -1,0 +1,14 @@
+# Credenciales y configuración local
+credentials.json
+.env
+
+# Reportes generados
+reportes/
+*.xlsx
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

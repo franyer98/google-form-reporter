@@ -38,3 +38,8 @@ jobs:
           path: |
             reportes/*.xlsx
             reportes/*.pdf
+          retention-days: 14
+
+      - name: Eliminar credenciales
+        if: always()
+        run: rm -f credentials.json

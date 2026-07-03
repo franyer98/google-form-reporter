@@ -48,10 +48,10 @@ Esto crea `reportes/reporte_YYYY-MM-DD_HHMM.xlsx` y `reportes/reporte_YYYY-MM-DD
 
 1. Sube este proyecto a un repositorio de GitHub.
 2. Ve a **Settings → Secrets and variables → Actions** y crea:
-   - `GOOGLE_CREDENTIALS_JSON`: pega el contenido completo del `credentials.json`.
+   - `GOOGLE_CREDENTIALS_JSON_B64`: contenido de `credentials.json` codificado en base64 (`base64 -w0 credentials.json` en Linux/Mac, o `certutil -encode credentials.json tmp.b64` en Windows).
    - `SHEET_ID`: el ID de tu hoja.
    - `WORKSHEET_NAME`: el nombre de la pestaña.
-3. El workflow en `.github/workflows/daily_report.yml` corre todos los días a las 8:00 am (hora Colombia) y deja el Excel y el PDF descargables en la pestaña **Actions → artifacts** (artefacto llamado "reportes").
+3. El workflow en `.github/workflows/daily_report.yml` corre todos los días a las 8:00 am (hora Colombia) y deja el Excel y el PDF descargables en la pestaña **Actions → artifacts** (artefacto llamado "reportes"), conservándolos por 14 días.
 4. Puedes ajustar el horario cambiando la línea `cron` (formato UTC).
 
 ### Opción B — Cron (Linux/Mac)

@@ -50,11 +50,30 @@ OUTPUT_DIR = os.getenv("OUTPUT_DIR", "reportes")
 
 def fetch_data() -> pd.DataFrame:
     """Conecta con Google Sheets y devuelve las respuestas como DataFrame."""
+    if not SHEET_ID:
+        raise ValueError("Falta la variable de entorno SHEET_ID.")
+    if not os.path.exists(CREDENTIALS_PATH):
+        raise FileNotFoundError(
+            f"No se encontró el archivo de credenciales en '{CREDENTIALS_PATH}'."
+        )
+
     creds = Credentials.from_service_account_file(CREDENTIALS_PATH, scopes=SCOPES)
     client = gspread.authorize(creds)
 
-    spreadsheet = client.open_by_key(SHEET_ID)
-    worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
+    try:
+        spreadsheet = client.open_by_key(SHEET_ID)
+    except gspread.exceptions.SpreadsheetNotFound as exc:
+        raise ValueError(
+            f"No se encontró la hoja de cálculo con SHEET_ID='{SHEET_ID}'. "
+            "Verificá el ID y que la cuenta de servicio tenga acceso de lector."
+        ) from exc
+
+    try:
+        worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound as exc:
+        raise ValueError(
+            f"No se encontró la pestaña '{WORKSHEET_NAME}' en la hoja de cálculo."
+        ) from exc
 
     records = worksheet.get_all_records()
     if not records:
