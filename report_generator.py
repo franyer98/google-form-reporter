@@ -11,9 +11,12 @@ Uso:
     python report_generator.py
 """
 
+import base64
+import io
 import os
 import tempfile
 from datetime import datetime
+from html import escape
 
 import gspread
 import matplotlib
@@ -50,11 +53,30 @@ OUTPUT_DIR = os.getenv("OUTPUT_DIR", "reportes")
 
 def fetch_data() -> pd.DataFrame:
     """Conecta con Google Sheets y devuelve las respuestas como DataFrame."""
+    if not SHEET_ID:
+        raise ValueError("Falta la variable de entorno SHEET_ID.")
+    if not os.path.exists(CREDENTIALS_PATH):
+        raise FileNotFoundError(
+            f"No se encontró el archivo de credenciales en '{CREDENTIALS_PATH}'."
+        )
+
     creds = Credentials.from_service_account_file(CREDENTIALS_PATH, scopes=SCOPES)
     client = gspread.authorize(creds)
 
-    spreadsheet = client.open_by_key(SHEET_ID)
-    worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
+    try:
+        spreadsheet = client.open_by_key(SHEET_ID)
+    except gspread.exceptions.SpreadsheetNotFound as exc:
+        raise ValueError(
+            f"No se encontró la hoja de cálculo con SHEET_ID='{SHEET_ID}'. "
+            "Verificá el ID y que la cuenta de servicio tenga acceso de lector."
+        ) from exc
+
+    try:
+        worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound as exc:
+        raise ValueError(
+            f"No se encontró la pestaña '{WORKSHEET_NAME}' en la hoja de cálculo."
+        ) from exc
 
     records = worksheet.get_all_records()
     if not records:
@@ -230,8 +252,105 @@ def write_pdf_report(df: pd.DataFrame, summary: dict, output_path: str) -> None:
         doc.build(story)
 
 
+def _chart_to_base64(result: pd.Series, question: str) -> str:
+    """Renderiza un gráfico de barras y lo devuelve como PNG codificado en base64."""
+    fig, ax = plt.subplots(figsize=(6, 3))
+    result.plot(kind="bar", ax=ax, color="#4C72B0")
+    ax.set_ylabel("Cantidad")
+    ax.set_xlabel("")
+    plt.xticks(rotation=30, ha="right")
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150)
+    plt.close(fig)
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode("ascii")
+
+
+def write_html_report(df: pd.DataFrame, summary: dict, output_path: str) -> None:
+    """Genera una página HTML autocontenida para ver el reporte en el navegador, sin descargar nada."""
+    sections = []
+    for question, info in summary.items():
+        result = info["data"]
+        if len(result) == 0:
+            continue
+
+        safe_question = escape(str(question))
+
+        if info["type"] == "categorical":
+            img_b64 = _chart_to_base64(result, question)
+            body = f'<img src="data:image/png;base64,{img_b64}" alt="{safe_question}">'
+        else:
+            rows = "".join(
+                f"<tr><td>{escape(str(idx))}</td><td>{escape(str(val))}</td></tr>"
+                for idx, val in result.items()
+            )
+            body = (
+                "<table class='stats'>"
+                "<tr><th>Estadística</th><th>Valor</th></tr>"
+                f"{rows}</table>"
+            )
+
+        sections.append(f"<section><h2>{safe_question}</h2>{body}</section>")
+
+    data_header = "".join(f"<th>{escape(str(col))}</th>" for col in df.columns)
+    data_rows = "".join(
+        "<tr>" + "".join(f"<td>{escape(str(v))}</td>" for v in row) + "</tr>"
+        for row in df.astype(str).values.tolist()
+    )
+
+    html = f"""<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reporte de Formulario</title>
+<style>
+  :root {{ color-scheme: light dark; }}
+  body {{
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    margin: 0 auto;
+    padding: 2rem;
+    max-width: 1000px;
+  }}
+  h1 {{ margin-bottom: 0.25rem; }}
+  .meta {{ color: #767676; margin-bottom: 2rem; }}
+  section {{ margin-bottom: 2.5rem; }}
+  section h2 {{ font-size: 1.1rem; border-bottom: 1px solid #8884; padding-bottom: 0.4rem; }}
+  img {{ max-width: 100%; height: auto; }}
+  table {{ border-collapse: collapse; width: 100%; font-size: 0.85rem; }}
+  th, td {{ border: 1px solid #8884; padding: 0.4rem 0.6rem; text-align: left; }}
+  th {{ background: #333; color: #fff; position: sticky; top: 0; }}
+  table.stats th {{ background: #4C72B0; }}
+  .data-wrap {{ overflow-x: auto; max-height: 600px; border: 1px solid #8884; }}
+  tbody tr:nth-child(even) {{ background: rgba(128, 128, 128, 0.08); }}
+</style>
+</head>
+<body>
+  <h1>Reporte de Formulario</h1>
+  <p class="meta">Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')} — Total de respuestas: {len(df)}</p>
+
+  <h2>Resumen por pregunta</h2>
+  {''.join(sections)}
+
+  <h2>Datos completos</h2>
+  <div class="data-wrap">
+    <table>
+      <thead><tr>{data_header}</tr></thead>
+      <tbody>{data_rows}</tbody>
+    </table>
+  </div>
+</body>
+</html>"""
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs("site", exist_ok=True)
 
     df = fetch_data()
     summary = build_summary(df)
@@ -239,12 +358,15 @@ def main():
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
     excel_path = os.path.join(OUTPUT_DIR, f"reporte_{timestamp}.xlsx")
     pdf_path = os.path.join(OUTPUT_DIR, f"reporte_{timestamp}.pdf")
+    html_path = os.path.join("site", "index.html")
 
     write_excel_report(df, summary, excel_path)
     write_pdf_report(df, summary, pdf_path)
+    write_html_report(df, summary, html_path)
 
     print(f"Reporte Excel generado: {excel_path}")
     print(f"Reporte PDF generado: {pdf_path}")
+    print(f"Reporte HTML generado: {html_path}")
     print(f"Total de respuestas: {len(df)}")
 
 
